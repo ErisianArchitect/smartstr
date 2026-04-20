@@ -1,0 +1,3 @@
+`smartstr` is a "smart" string implementation.
+
+A smart string is an optimized string representation for immutable strings that is able to store strings from multiple sources. If the string is 15 characters or less, it can be made inline, meaning that there will be no heap allocation. You can create a `SmartStr` from a static string, and there also will be no heap allocation. Additionally, you can create a smart string from a `Box<str>`, `Arc<str>`, or `Rc<str>`, and the `SmartStr` will respect the drop/clone semantics of each.

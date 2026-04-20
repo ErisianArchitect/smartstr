@@ -1,0 +1,12 @@
+[package]
+name = "smartstr"
+description = "Smart, multi-purpose string."
+authors = ["ErisianArchitect <github.com/ErisianArchitect>"]
+repository = "https://github.com/ErisianArchitect/smartstr"
+license = "MIT"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lolevel = "0.6.1-indev"
+paste = "1.0.15"
