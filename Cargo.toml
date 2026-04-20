@@ -4,7 +4,7 @@ description = "Smart, multi-purpose string."
 authors = ["ErisianArchitect <github.com/ErisianArchitect>"]
 repository = "https://github.com/ErisianArchitect/smartstr"
 license = "MIT"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]

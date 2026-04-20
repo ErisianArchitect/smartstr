@@ -611,22 +611,15 @@ impl SmartStr {
             let indirect = self.inline.as_indirect();
             let (ptr, len) = match indirect.ty {
                 IndirectType::Empty => (self.inline.as_ptr(), 0),
-                IndirectType::Static | IndirectType::Heap | IndirectType::Box => {
-                    (indirect.ptr.as_ptr(), indirect.len())
-                }
+                IndirectType::Static | IndirectType::Heap => (indirect.ptr.as_ptr(), indirect.len()),
+                IndirectType::Box => unsafe {
+                    (indirect.forgotten_box().as_ptr(), indirect.len())
+                },
                 IndirectType::Arc => unsafe {
-                    let arc = ManuallyDrop::new(Arc::from_raw(make_str_ptr(
-                        indirect.ptr.as_ptr(),
-                        indirect.len(),
-                    )));
-                    (arc.as_ptr(), indirect.len())
+                    (indirect.forgotten_arc().as_ptr(), indirect.len())
                 },
                 IndirectType::Rc => unsafe {
-                    let rc = ManuallyDrop::new(Rc::from_raw(make_str_ptr(
-                        indirect.ptr.as_ptr(),
-                        indirect.len(),
-                    )));
-                    (rc.as_ptr(), indirect.len())
+                    (indirect.forgotten_rc().as_ptr(), indirect.len())
                 },
             };
             unsafe { std::str::from_utf8_unchecked(slice::from_raw_parts(ptr, len)) }
