@@ -981,3 +981,42 @@ mod tests {
         assert!(ptr::eq(arc.as_ptr(), arc3.as_ptr()));
     }
 }
+
+#[cfg(feature = "serde")]
+mod serde_feature {
+    use super::*;
+    use serde::{Serialize, Deserialize, de::Visitor};
+
+    impl Serialize for SmartStr {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer {
+            self.as_str().serialize(serializer)
+        }
+    }
+
+    struct SmartStrVisitor;
+
+    impl<'de> Visitor<'de> for SmartStrVisitor {
+        type Value = SmartStr;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a utf-8 string")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(SmartStr::new(v))
+        }
+    }
+
+    impl<'de> Deserialize<'de> for SmartStr {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de> {
+            deserializer.deserialize_str(SmartStrVisitor)
+        }
+    }
+}
