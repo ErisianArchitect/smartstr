@@ -332,7 +332,7 @@ impl IndirectFlags {
         if on {
             self.0 |= flags.0;
         } else {
-            self.0 &= flags.invert().0;
+            self.0 &= !(flags.0);
         }
     }
 
