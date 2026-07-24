@@ -4,37 +4,36 @@ use core::{
     ptr::{self, NonNull},
     slice,
 };
-use lolevel::checks;
 use std::{alloc, mem::offset_of, rc::Rc, slice::SliceIndex, sync::Arc};
 
-// TODO: Maybe make this library work for other pointer widths?
-#[cfg(not(target_pointer_width = "64"))]
-compile_error!("This library expects a pointer width of 8. Sorry.");
-
+/// Puts `value` into ManuallyDrop<T> so that it can be forgotten, but also
+/// so that fields can be accessed after forgetting.
 #[must_use]
 #[inline(always)]
 const fn forgotten<T>(value: T) -> ManuallyDrop<T> {
     ManuallyDrop::new(value)
 }
 
+/// Create a (static) string slice from a pointer and a length.
+/// 
+/// You are responsible for ensuring the lifetime of the returned string is correct.
 const unsafe fn make_raw_str(ptr: *const u8, len: usize) -> &'static str {
-    const _: () = lolevel::checks::assert_same_size_align::<*const str, &[u8]>();
+    const _: () = isit::assert_same_size_align::<*const str, &[u8]>();
     unsafe {
         let bytes: &[u8] = slice::from_raw_parts(ptr, len);
         std::str::from_utf8_unchecked(bytes)
     }
 }
 
+/// Create a fat str pointer from a pointer and a length.
 #[must_use]
 #[inline(always)]
 const unsafe fn make_str_ptr(ptr: *const u8, len: usize) -> *const str {
-    const _: () = lolevel::checks::assert_same_size_align::<*const str, &[u8]>();
-    unsafe {
-        let bytes: &[u8] = slice::from_raw_parts(ptr, len);
-        bytes as *const [u8] as *const str
-    }
+    const _: () = isit::assert_same_size_align::<*const str, &[u8]>();
+    ::core::ptr::slice_from_raw_parts(ptr, len) as *const str
 }
 
+/// Create a 16-byte aligned layout for the given size.
 #[must_use]
 #[inline(always)]
 const fn heap_string_layout(size: u32) -> Layout {
@@ -70,16 +69,28 @@ enum StrLen {
 }
 
 impl StrLen {
-    pub const ADDR: usize = Self::Addr as usize;
+    /// The constant usize value of Self::Addr.
+    /// 
+    /// This can be used for pattern matching.
+    /// ```rust, ignore
+    /// match string.len() {
+    ///     StrLen::ADDR => (),
+    ///     _ => (),
+    /// }
+    /// ```
+    const ADDR: usize = Self::Addr as usize;
 }
 
 mod footer {
     use super::StrLen;
 
+    /// A type that's used as the footer of the [Indirect] type.
+    /// 
+    /// This constrains the value to [StrLen::Addr].
     #[repr(transparent)]
     #[derive(Debug, Clone, Copy)]
     pub struct Footer(StrLen);
-    const _: () = lolevel::checks::assert_same_size_align::<Footer, u8>();
+    const _: () = isit::assert_same_size_align::<Footer, u8>();
 
     /// The purpose of [INDIRECT_FOOTER] is to constrain a byte to
     /// the value of [StrLen::Addr].
@@ -88,76 +99,138 @@ mod footer {
 
 use footer::{Footer, INDIRECT_FOOTER};
 
+/// Determines the indirect type.
+/// 
+/// # Types
+/// 
+/// | Variant | Determines                       |
+/// |:--------|:---------------------------------|
+/// | Empty   | An empty string.                 |
+/// | Static  | A string with a static lifetime. |
+/// | Heap    | A heap allocated string.         |
+/// | Box     | Created from [Box<str>]          |
+/// | Arc     | Created from [Arc<str>]          |
+/// | Rc      | Created from [Rc<str>]           |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IndirectType {
+    /// An empty string.
     Empty = 0,
+    /// A string with a static lifetime.
     Static = 1,
+    /// A heap allocated string.
     Heap = 2,
+    /// A string created from [Box<str>].
     Box = 3,
+    /// A string created from [Arc<str>].
     Arc = 4,
+    /// A string created from [Rc<str>].
     Rc = 5,
 }
 
 impl IndirectType {
+    /// Convert into [StorageType::Indirect].
     #[must_use]
     #[inline(always)]
     const fn into_storage(self) -> StorageType {
         StorageType::Indirect(self)
     }
 
+    /// Checks if [self] is [IndirectType::Empty].
     #[must_use]
     #[inline(always)]
     pub const fn is_empty(self) -> bool {
         matches!(self, Self::Empty)
     }
+
+    /// Checks if [self] is [IndirectType::Heap].
+    #[must_use]
+    #[inline(always)]
+    pub const fn is_heap(self) -> bool {
+        matches!(self, Self::Heap)
+    }
+
+    /// Checks if [self] is [IndirectType::Box].
+    #[must_use]
+    #[inline(always)]
+    pub const fn is_box(self) -> bool {
+        matches!(self, Self::Box)
+    }
+
+    /// Checks if [self] is [IndirectType::Arc].
+    #[must_use]
+    #[inline(always)]
+    pub const fn is_arc(self) -> bool {
+        matches!(self, Self::Arc)
+    }
+
+    /// Checks if [self] is [IndirectType::Rc].
+    #[must_use]
+    #[inline(always)]
+    pub const fn is_rc(self) -> bool {
+        matches!(self, Self::Rc)
+    }
 }
 
 // NOTE: This type's variants depend on the variants of IndirectType.
+/// Determines the storage type of a [SmartStr] instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum StorageType {
+    /// Indirect storage type.
+    /// 
+    /// See [IndirectType].
     Indirect(IndirectType),
+    /// Inline storage type.
+    ///
+    /// The string is stored inline within [SmartStr].
     Inline,
 }
-const _: () = lolevel::checks::assert_same_size_align::<IndirectType, u8>();
-const _: () = lolevel::checks::assert_same_size_align::<StorageType, u8>();
+const _: () = isit::assert_same_size_align::<IndirectType, u8>();
+const _: () = isit::assert_same_size_align::<StorageType, u8>();
 
 impl StorageType {
+    /// Check if [self] is [IndirectType::Empty].
     #[must_use]
     #[inline(always)]
     pub const fn is_empty(self) -> bool {
         matches!(self, Self::Indirect(IndirectType::Empty))
     }
 
+    /// Check if [self] is [IndirectType::Static].
     #[must_use]
     #[inline(always)]
     pub const fn is_static(self) -> bool {
         matches!(self, Self::Indirect(IndirectType::Static))
     }
 
+    /// Check if [self] is [IndirectType::Heap].
     #[must_use]
     #[inline(always)]
     pub const fn is_heap(self) -> bool {
         matches!(self, Self::Indirect(IndirectType::Heap))
     }
 
+    /// Check if [self] is [IndirectType::Box].
     #[must_use]
     #[inline(always)]
     pub const fn is_box(self) -> bool {
         matches!(self, Self::Indirect(IndirectType::Box))
     }
 
+    /// Check if [self] is [IndirectType::Arc].
     #[must_use]
     #[inline(always)]
     pub const fn is_arc(self) -> bool {
         matches!(self, Self::Indirect(IndirectType::Arc))
     }
 
+    /// Check if [self] is [IndirectType::Rc].
     #[must_use]
     #[inline(always)]
     pub const fn is_rc(self) -> bool {
         matches!(self, Self::Indirect(IndirectType::Rc))
     }
 
+    /// Check if [self] is [StorageType::Inline].
     #[must_use]
     #[inline(always)]
     pub const fn is_inline(self) -> bool {
@@ -165,38 +238,76 @@ impl StorageType {
     }
 }
 
+/// Flags for the [Indirect] storage type.
+/// 
+/// # Flags
+/// 
+/// | Flag                | Purpose                                      |
+/// |:--------------------|:---------------------------------------------|
+/// | IndirectFlags::LEAK | Leak the heap memory held by the [SmartStr]. |
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
 pub struct IndirectFlags(u16);
 
 macro_rules! indirect_flags {
     ($(
-        <$upper:ident $lower:ident> = $bits:expr
+        $(
+            #[$attr:meta]
+        )*
+        $upper:ident = $bits:expr
     ),*$(,)?) => {
         paste::paste!{
+            pub const ALL: Self = {
+                let mut flags = Self::NONE;
+                $(
+                    flags.set(Self::$upper, true);
+                )*
+                flags
+            };
             $(
+                $(#[$attr])*
                 pub const $upper: Self = Self($bits);
 
+                #[doc = concat!(
+                    "Check if [IndirectFlags::",
+                    stringify!($upper),
+                    "] is set."
+                )]
                 #[must_use]
                 #[inline]
-                pub const fn $lower(self) -> bool {
+                pub const fn [< $upper:lower >](self) -> bool {
                     self.has_all(Self::$upper)
                 }
 
+                #[doc = concat!(
+                    "Set the value of [IndirectFlags::",
+                    stringify!($upper),
+                    "]."
+                )]
                 #[inline]
-                pub const fn [<set_ $lower>](&mut self, on: bool) {
+                pub const fn [< set_ $upper:lower >](&mut self, on: bool) {
                     self.set(Self::$upper, on)
                 }
 
+                #[doc = concat!(
+                    "Builder method to add [IndirectFlags::",
+                    stringify!($upper),
+                    "] to [self]."
+                )]
                 #[must_use]
                 #[inline]
-                pub const fn [<with_ $lower>](self) -> Self {
+                pub const fn [< with_ $upper:lower >](self) -> Self {
                     self.with(Self::$upper)
                 }
 
+                #[doc = concat!(
+                    "Builder method to remove [IndirectFlags::",
+                    stringify!($upper),
+                    "] from [self]."
+                )]
                 #[must_use]
                 #[inline]
-                pub const fn [<without_ $lower>](self) -> Self {
+                pub const fn [< without_ $upper:lower >](self) -> Self {
                     self.without(Self::$upper)
                 }
             )*
@@ -205,13 +316,17 @@ macro_rules! indirect_flags {
 }
 
 impl IndirectFlags {
+    /// No flags.
     pub const NONE: Self = Self(0);
+
+    /// Invert the flags (not very useful on its own, but is necessary for masking).
     #[must_use]
     #[inline(always)]
     pub const fn invert(self) -> Self {
-        Self(!self.0)
+        Self(!self.0 & Self::ALL.0)
     }
 
+    /// Set the value of `flags`.
     #[inline]
     pub const fn set(&mut self, flags: Self, on: bool) {
         if on {
@@ -221,6 +336,7 @@ impl IndirectFlags {
         }
     }
 
+    /// Builder method to add `flags`.
     #[must_use]
     #[inline]
     pub const fn with(mut self, flags: Self) -> Self {
@@ -228,6 +344,7 @@ impl IndirectFlags {
         self
     }
 
+    /// Builder method to remove `flags`.
     #[must_use]
     #[inline(always)]
     pub const fn without(mut self, flags: Self) -> Self {
@@ -235,18 +352,21 @@ impl IndirectFlags {
         self
     }
 
+    /// Check if any of the bits in `flags` are set in `self`.
     #[must_use]
     #[inline(always)]
     pub const fn has_any(self, flags: Self) -> bool {
         self.0 & flags.0 != 0
     }
 
+    /// Check if all of the bits in `flags` are set in `self`.
     #[must_use]
     #[inline(always)]
     pub const fn has_all(self, flags: Self) -> bool {
         self.0 & flags.0 == flags.0
     }
 
+    /// Check if none of the bits in `flags` are set in `self`.
     #[must_use]
     #[inline(always)]
     pub const fn has_none(self, flags: Self) -> bool {
@@ -254,24 +374,29 @@ impl IndirectFlags {
     }
 
     indirect_flags! {
-        <LEAK leak> = 0x01,
+        /// Leak the memory pointed to by the indirect storage type.
+        LEAK = 0x01,
     }
 }
 
+/// A wrapper for [Option<NonNull<u8>>].
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
 struct Ptr(Option<NonNull<u8>>);
-const _: () = lolevel::checks::assert_pointer_size_align::<Ptr>();
+const _: () = isit::assert_pointer_size_align::<Ptr>();
 
 impl Ptr {
-    pub const NONE: Self = Self(None);
+    /// The equivalent of `null`.
+    pub const NULL: Self = Self(None);
 
+    /// Create [Ptr] from a [*const u8].
     #[must_use]
     #[inline(always)]
     const fn from_ptr(ptr: *const u8) -> Self {
         unsafe { transmute(ptr) }
     }
 
+    /// Return raw pointer contained in `self`.
     #[must_use]
     #[inline(always)]
     const fn as_ptr(self) -> *const u8 {
@@ -290,33 +415,51 @@ union InlineFast {
     bytes: [u8; 15],
 }
 
+/// Storage container for an inline string.
 #[repr(C, align(8))]
 #[derive(Clone, Copy)]
 struct Inline {
+    /// The field that stores the inline string.
     fast: InlineFast,
+    /// The length of the inline string.
     len: StrLen,
 }
-const _: () = lolevel::checks::const_assert(offset_of!(Inline, len) == 15);
+const _: () = isit::const_assert(offset_of!(Inline, len) == 15);
 
-#[repr(C)]
+/// Storage container for an indirect string.
+#[repr(C, align(8))]
 #[derive(Debug, Clone, Copy)]
 struct Indirect {
+    /// The pointer to the inline string.
     ptr: Ptr,
+    /// This field is used to force alignment of the following fields to 8 bytes.
     _force_align_0: [u64; 0],
+    /// The actual length of the string.
     len: u32,
+    /// Flags that determine attributes for the [Indirect] container.
     flags: IndirectFlags,
+    /// If the inner type of [IndirectFlags] is ever changed to [u8], this will ensure the correct
+    /// offset for the footer.
+    _force_align_1: [u16; 0],
+    /// Determines what the pointer points to.
     ty: IndirectType,
+    /// The footer, which has the invariant that it must always have the same bit representation as [StrLen::Addr].
     _footer: Footer,
 }
-const _: () = checks::assert_pointer_size_align::<Ptr>();
-const _: () = checks::const_assert(offset_of!(Indirect, len) == 8);
-const _: () = checks::const_assert(offset_of!(Indirect, _footer) == 15);
+const _: () = isit::assert_pointer_size_align::<Ptr>();
+const _: () = isit::assert_same_size_align::<[u64; 2], Indirect>();
+const _: () = isit::const_assert(offset_of!(Indirect, len) == 8);
+const _: () = isit::const_assert(offset_of!(Indirect, _footer) == 15);
 
 impl Indirect {
+    /// The maximum length that a string can be. This is set to [u32::MAX].
     const MAX_LEN: usize = u32::MAX as usize;
+    /// The representation of an empty string as an [Indirect] storage container.
     const EMPTY: Self =
-        Indirect::with_footer(Ptr::NONE, 0, IndirectFlags::NONE, IndirectType::Empty);
+        Indirect::with_footer(Ptr::NULL, 0, IndirectFlags::NONE, IndirectType::Empty);
 
+    /// Creates a new [Indirect] storage container with the given fields, and fills out the
+    /// fields necessary for layout/bit representation.
     #[must_use]
     #[inline(always)]
     const fn with_footer(ptr: Ptr, len: u32, flags: IndirectFlags, ty: IndirectType) -> Self {
@@ -325,11 +468,13 @@ impl Indirect {
             _force_align_0: [],
             len,
             flags,
+            _force_align_1: [],
             ty,
             _footer: INDIRECT_FOOTER,
         }
     }
 
+    /// Create an [Indirect] storage container for a static string.
     const unsafe fn new_static(s: &'static str) -> Self {
         Self::with_footer(
             Ptr::from_ptr(s.as_ptr()),
@@ -339,16 +484,17 @@ impl Indirect {
         )
     }
 
+    /// Convert [Indirect] into [SmartStr].
     #[must_use]
     #[inline(always)]
     const fn into_smartstr(self) -> SmartStr {
-        const _: () = lolevel::checks::assert_same_size_align::<Indirect, SmartStr>();
+        const _: () = isit::assert_same_size_align::<Indirect, SmartStr>();
         unsafe { transmute(self) }
     }
 
     #[must_use]
     #[inline(always)]
-    const fn as_inline(&self) -> &Inline {
+    const unsafe fn as_inline(&self) -> &Inline {
         unsafe { transmute(self) }
     }
 
@@ -373,7 +519,8 @@ impl Indirect {
     #[inline(always)]
     fn as_ptr(&self) -> *const u8 {
         match self.ty {
-            IndirectType::Empty => self.as_inline().as_ptr(),
+            // Empty => points to beginning of inline string bytes (empty string has length of 0, but location of inline buffer).
+            IndirectType::Empty => unsafe { self.as_inline().as_ptr() },
             IndirectType::Static | IndirectType::Heap | IndirectType::Box => self.ptr.as_ptr(),
             IndirectType::Arc => unsafe { self.forgotten_arc().as_ptr() },
             IndirectType::Rc => unsafe { self.forgotten_rc().as_ptr() },
@@ -387,8 +534,8 @@ impl Indirect {
     }
 }
 
-const _: () = lolevel::checks::assert_same_size_align::<[u64; 2], Inline>();
-const _: () = lolevel::checks::assert_same_size_align::<[u64; 2], Indirect>();
+const _: () = isit::assert_same_size_align::<[u64; 2], Inline>();
+const _: () = isit::assert_same_size_align::<[u64; 2], Indirect>();
 
 impl Inline {
     #[must_use]
@@ -445,7 +592,7 @@ impl Inline {
     #[must_use]
     #[inline(always)]
     const fn into_smartstr(self) -> SmartStr {
-        const _SAFETY: () = lolevel::checks::assert_same_size_align::<Inline, SmartStr>();
+        const _SAFETY: () = isit::assert_same_size_align::<Inline, SmartStr>();
         unsafe { transmute(self) }
     }
 }
@@ -454,7 +601,7 @@ impl Inline {
 pub struct SmartStr {
     inline: Inline,
 }
-const _: () = checks::const_assert(SmartStr::INLINE_LEN == 15);
+const _: () = isit::const_assert(SmartStr::INLINE_LEN == 15);
 
 impl SmartStr {
     pub const INLINE_LEN: usize = size_of::<InlineFast>();
@@ -465,6 +612,7 @@ impl SmartStr {
         Indirect::EMPTY.into_smartstr()
     }
 
+    #[must_use]
     const unsafe fn new_inline(s: &str) -> Self {
         debug_assert!(matches!(s.len(), 1..16));
         let mut bytes = [0u8; 15];
@@ -483,6 +631,7 @@ impl SmartStr {
         }
     }
 
+    #[must_use]
     unsafe fn new_heap(s: &str) -> Self {
         debug_assert!(s.len() <= Indirect::MAX_LEN);
         let len = s.len() as u32;
@@ -517,10 +666,10 @@ impl SmartStr {
         if s.len() > Indirect::MAX_LEN {
             return Err(s);
         }
-        let leak = Box::leak(s);
-        let (ptr, len) = (leak.as_ptr(), leak.len());
+        let len = s.len();
+        let leak = Box::into_raw(s);
         Ok(Indirect::with_footer(
-            Ptr::from_ptr(ptr),
+            Ptr::from_ptr(leak.cast()),
             len as u32,
             IndirectFlags::NONE,
             IndirectType::Box,
@@ -532,11 +681,10 @@ impl SmartStr {
         if s.len() > Indirect::MAX_LEN {
             return Err(s);
         }
+        let len = s.len();
         let leak = Arc::into_raw(s);
-        let s: &'static str = unsafe { transmute(&*leak) };
-        let (ptr, len) = (s.as_ptr(), s.len());
         Ok(Indirect::with_footer(
-            Ptr::from_ptr(ptr),
+            Ptr::from_ptr(leak.cast()),
             len as u32,
             IndirectFlags::NONE,
             IndirectType::Arc,
@@ -548,11 +696,10 @@ impl SmartStr {
         if s.len() > Indirect::MAX_LEN {
             return Err(s);
         }
+        let len = s.len();
         let leak = Rc::into_raw(s);
-        let s: &'static str = unsafe { transmute(&*leak) };
-        let (ptr, len) = (s.as_ptr(), s.len());
         Ok(Indirect::with_footer(
-            Ptr::from_ptr(ptr),
+            Ptr::from_ptr(leak.cast()),
             len as u32,
             IndirectFlags::NONE,
             IndirectType::Rc,
@@ -932,9 +1079,9 @@ mod tests {
         );
         assert!(longer.storage_type().is_heap());
         println!("{longer}");
-        const _: () = lolevel::checks::assert_niche::<SmartStr>();
-        const _: () = lolevel::checks::assert_niche::<Option<SmartStr>>();
-        const _: () = lolevel::checks::assert_niche::<Option<Option<SmartStr>>>();
+        const _: () = isit::assert_niche::<SmartStr>();
+        const _: () = isit::assert_niche::<Option<SmartStr>>();
+        const _: () = isit::assert_niche::<Option<Option<SmartStr>>>();
         let boxed = SmartStr::from(Box::from("hello, world!"));
         println!("{boxed}");
         assert!(boxed.storage_type().is_box());
