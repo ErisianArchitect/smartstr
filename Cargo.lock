@@ -3,10 +3,10 @@
 version = 4
 
 [[package]]
-name = "lolevel"
-version = "0.6.1-indev"
+name = "isit"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e561c085dde2548812ff3575d97cdd6b1e272dd278e096cbbe0f5b055d92b76f"
+checksum = "9f4575a928813120f1c29dff9037d0827a9a52991954410f7be605c81acbed24"
 
 [[package]]
 name = "paste"
@@ -65,7 +65,7 @@ dependencies = [
 name = "smartstr"
 version = "0.2.0"
 dependencies = [
- "lolevel",
+ "isit",
  "paste",
  "serde",
 ]
