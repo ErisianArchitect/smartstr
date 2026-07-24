@@ -4,8 +4,7 @@ description = "Smart, multi-purpose string."
 authors = ["ErisianArchitect <github.com/ErisianArchitect>"]
 repository = "https://github.com/ErisianArchitect/smartstr"
 license = "MIT"
-# TODO: Patch bump from 0.2.0 to 0.2.1
-publish = false
+publish = true
 version = "0.2.1"
 edition = "2024"
 
